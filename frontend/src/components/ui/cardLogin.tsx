@@ -5,6 +5,7 @@ import * as z from "zod"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { Loader2 } from "lucide-react"
+import axios from "axios"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -27,7 +28,7 @@ const authSchema = z.object({
     .email("Insira um endereço de email válido"),
   password: z
     .string()
-    .min(6, "A senha deve ter pelo menos 6 caracteres"),
+    .min(8, "A senha deve ter pelo menos 8 caracteres"),
   confirmPassword: z.string().optional(),
 })
 
@@ -68,17 +69,17 @@ export function CardLogin({
 
     // Validação manual complementar para o nome em modo de cadastro
     if (isRegister) {
-      if (!data.name || data.name.trim().length < 3) {
+      if (!data.name || data.name.trim().length < 4) {
         setError("name", {
           type: "manual",
-          message: "O nome deve ter pelo menos 3 caracteres",
+          message: "O nome deve ter pelo menos 4 caracteres",
         })
         hasError = true
       }
-      if (!data.confirmPassword || data.confirmPassword.length < 6) {
+      if (!data.confirmPassword || data.confirmPassword.length < 8) {
         setError("confirmPassword", {
           type: "manual",
-          message: "A confirmação da senha é obrigatória e deve ter pelo menos 6 caracteres",
+          message: "A confirmação da senha é obrigatória e deve ter pelo menos 8 caracteres",
         })
         hasError = true
       } else if (data.confirmPassword !== data.password) {
@@ -108,11 +109,13 @@ export function CardLogin({
         toast.success("Login realizado com sucesso!")
       }
       // Redireciona o usuário para a página de salas
-      navigate("/rooms")
-    } catch (error: any) {
+      navigate("/chat")
+    } catch (error: unknown) {
       console.error("Erro na autenticação:", error)
       const errorMsg =
-        error.response?.data?.message ||
+        (axios.isAxiosError<{ message?: string }>(error)
+          ? error.response?.data?.message
+          : undefined) ||
         "Ocorreu um erro inesperado. Verifique os dados fornecidos."
       toast.error(errorMsg)
     }

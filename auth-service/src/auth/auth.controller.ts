@@ -5,6 +5,7 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -40,5 +41,19 @@ export class AuthController {
   @Get('validate')
   validate(@Req() request: AuthenticatedRequest): PublicUser {
     return this.authService.toPublicUser(request.user);
+  }
+
+  @Get('health')
+  health(): Record<string, string> {
+    return { status: 'ok', service: 'auth-service' };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('users')
+  async users(
+    @Req() request: AuthenticatedRequest,
+    @Query('search') search?: string,
+  ): Promise<PublicUser[]> {
+    return this.authService.listUsers(request.user.id, search);
   }
 }

@@ -1,0 +1,129 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-webchat}
+      POSTGRES_USER: ${POSTGRES_USER:-webchat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-webchat}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-webchat} -d ${POSTGRES_DB:-webchat}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-webchat}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-webchat}
+    ports:
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  auth-service:
+    build: ./auth-service
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-webchat}
+      DB_USER: ${POSTGRES_USER:-webchat}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-webchat}
+      DB_SYNC: "true"
+      JWT_SECRET: ${JWT_SECRET:-change-this-development-secret-with-32-chars}
+      JWT_EXPIRES_IN: 15m
+      BCRYPT_ROUNDS: 12
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      CORS_ORIGIN: "*"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  chat-service:
+    build: ./chat-service
+    environment:
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-webchat}
+      DB_USER: ${POSTGRES_USER:-webchat}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-webchat}
+      DB_SYNC: "true"
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-webchat}:${RABBITMQ_PASSWORD:-webchat}@rabbitmq:5672
+      RABBITMQ_EXCHANGE: chat.events
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  websocket-service:
+    build: ./websocket-service
+    environment:
+      PORT: 3000
+      JWT_SECRET: ${JWT_SECRET:-change-this-development-secret-with-32-chars}
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-webchat}:${RABBITMQ_PASSWORD:-webchat}@rabbitmq:5672
+      RABBITMQ_EXCHANGE: chat.events
+      RABBITMQ_QUEUE: websocket.message-events
+      CORS_ORIGIN: "*"
+    depends_on:
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  api-gateway:
+    build: ./api-gateway
+    environment:
+      PORT: 3000
+      AUTH_SERVICE_URL: http://auth-service:3000
+      CHAT_SERVICE_URL: http://chat-service:3000
+      CORS_ORIGIN: "*"
+    ports:
+      - "3333:3000"
+    depends_on:
+      - auth-service
+      - chat-service
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: dockerfile
+      args:
+        VITE_API_URL: /api
+        VITE_WS_URL: /realtime
+    ports:
+      - "8080:80"
+    depends_on:
+      - api-gateway
+      - websocket-service
+
+volumes:
+  postgres-data:
+  redis-data:
+  rabbitmq-data:

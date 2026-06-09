@@ -81,6 +81,11 @@ export class AuthService {
     await this.redisService.revokeToken(token, payload.exp);
   }
 
+  async listUsers(userId: string, search?: string): Promise<PublicUser[]> {
+    const users = await this.usersService.findOthers(userId, search?.trim());
+    return users.map((user) => this.toPublicUser(user));
+  }
+
   toPublicUser(user: User): PublicUser {
     return {
       id: user.id,
