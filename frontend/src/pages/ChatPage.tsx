@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
+  Camera,
   Check,
   CheckCheck,
   CircleAlert,
@@ -19,6 +20,12 @@ import { toast } from "sonner"
 import type { Socket } from "socket.io-client"
 
 import { Button } from "@/components/ui/button"
+import {
+  Avatar,
+  AvatarBadge,
+  AvatarFallback,
+  AvatarImage,
+} from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
 import { ThemeToggle } from "@/components/ui/themeToggle"
 import {
@@ -43,10 +50,19 @@ interface RemovedEvent {
   removedUserId: string
 }
 
+interface PresenceEvent {
+  userId: string
+}
+
+interface PresenceListEvent {
+  userIds: string[]
+}
+
 export function ChatPage() {
   const navigate = useNavigate()
-  const [currentUser] = useState(() => session.getUser())
+  const [currentUser, setCurrentUser] = useState(() => session.getUser())
   const [users, setUsers] = useState<User[]>([])
+  const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set())
   const [chats, setChats] = useState<Chat[]>([])
   const [messages, setMessages] = useState<Record<string, Message[]>>({})
   const [realtimeConnected, setRealtimeConnected] = useState(false)
@@ -60,12 +76,15 @@ export function ChatPage() {
   const [groupMode, setGroupMode] = useState(false)
   const [groupName, setGroupName] = useState("")
   const [selectedUsers, setSelectedUsers] = useState<string[]>([])
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const avatarInputRef = useRef<HTMLInputElement>(null)
 
   const usersById = useMemo(
     () => new Map(users.map((user) => [user.id, user])),
     [users],
   )
+  const currentUserId = currentUser?.id
   const selectedChat = chats.find((chat) => chat.id === selectedChatId)
   const selectedMessages = selectedChatId ? messages[selectedChatId] || [] : []
 
@@ -77,7 +96,7 @@ export function ChatPage() {
   }
 
   useEffect(() => {
-    if (!currentUser || !session.getToken()) {
+    if (!currentUserId || !session.getToken()) {
       navigate("/login")
       return
     }
@@ -90,18 +109,40 @@ export function ChatPage() {
         session.clear()
         navigate("/login")
       })
-  }, [currentUser, navigate])
+  }, [currentUserId, navigate])
 
   useEffect(() => {
-    if (!currentUser) return
+    if (!currentUserId) return
     const socket: Socket = connectRealtime()
 
-    socket.on("connect", () => setRealtimeConnected(true))
-    socket.on("disconnect", () => setRealtimeConnected(false))
+    socket.on("connect", () => {
+      setRealtimeConnected(true)
+      socket.emit("presence.get")
+    })
+    socket.on("disconnect", () => {
+      setRealtimeConnected(false)
+      setOnlineUserIds(new Set())
+    })
     socket.on("connect_error", () => setRealtimeConnected(false))
     socket.io.on("reconnect", () => {
       setMessages({})
       void chatService.list().then(setChats).catch(() => undefined)
+      void authService.users().then(setUsers).catch(() => undefined)
+    })
+    socket.on("presence.list", (event: PresenceListEvent) => {
+      setOnlineUserIds(new Set(event.userIds))
+    })
+    socket.on("user.online", (event: PresenceEvent) => {
+      setOnlineUserIds((previous) => new Set(previous).add(event.userId))
+      void authService.users().then(setUsers).catch(() => undefined)
+    })
+    socket.on("user.offline", (event: PresenceEvent) => {
+      setOnlineUserIds((previous) => {
+        const updated = new Set(previous)
+        updated.delete(event.userId)
+        return updated
+      })
+      void authService.users().then(setUsers).catch(() => undefined)
     })
     socket.on("message.created", (message: Message) => {
       setMessages((previous) => {
@@ -137,7 +178,7 @@ export function ChatPage() {
     })
     socket.on("chat.created", (chat: Chat) => {
       upsertChat(chat)
-      if (chat.adminId !== currentUser.id) {
+      if (chat.adminId !== currentUserId) {
         toast.info(`Você foi adicionado ao grupo ${chat.name || ""}.`)
       }
     })
@@ -145,7 +186,7 @@ export function ChatPage() {
       upsertChat(chat)
     })
     socket.on("participant.removed", (event: RemovedEvent) => {
-      if (event.removedUserId === currentUser.id) {
+      if (event.removedUserId === currentUserId) {
         setChats((previous) =>
           previous.filter((chat) => chat.id !== event.chatId),
         )
@@ -169,7 +210,7 @@ export function ChatPage() {
       socket.removeAllListeners()
       socket.disconnect()
     }
-  }, [currentUser])
+  }, [currentUserId])
 
   useEffect(() => {
     const handleVisibility = () =>
@@ -346,6 +387,26 @@ export function ChatPage() {
     navigate("/login")
   }
 
+  const uploadAvatar = async (file?: File) => {
+    if (!file) return
+    if (!file.type.startsWith("image/")) {
+      toast.error("Selecione um arquivo de imagem.")
+      return
+    }
+    setUploadingAvatar(true)
+    try {
+      const avatarUrl = await resizeAvatar(file)
+      const user = await authService.updateAvatar(avatarUrl)
+      setCurrentUser(user)
+      toast.success("Avatar atualizado.")
+    } catch {
+      toast.error("Não foi possível atualizar o avatar.")
+    } finally {
+      setUploadingAvatar(false)
+      if (avatarInputRef.current) avatarInputRef.current.value = ""
+    }
+  }
+
   const isMessageRead = (message: Message, chat: Chat) => {
     const expectedReaders = chat.participants
       .map((participant) => participant.userId)
@@ -366,15 +427,40 @@ export function ChatPage() {
         }`}
       >
         <header className="flex h-16 items-center justify-between border-b px-4 dark:border-gray-800">
-          <div>
-            <strong>{currentUser.name}</strong>
-            <p
-              className={`text-xs ${
-                realtimeConnected ? "text-green-500" : "text-amber-500"
-              }`}
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              type="button"
+              className="group relative rounded-full"
+              onClick={() => avatarInputRef.current?.click()}
+              disabled={uploadingAvatar}
+              aria-label="Alterar avatar"
             >
-              {realtimeConnected ? "Online" : "Reconectando..."}
-            </p>
+              <UserAvatar user={currentUser} className="size-10" />
+              <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100">
+                <Camera size={16} />
+              </span>
+            </button>
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(event) => void uploadAvatar(event.target.files?.[0])}
+            />
+            <div className="min-w-0">
+              <strong className="block truncate">{currentUser.name}</strong>
+              <p
+                className={`text-xs ${
+                  realtimeConnected ? "text-green-500" : "text-amber-500"
+                }`}
+              >
+                {uploadingAvatar
+                  ? "Atualizando avatar..."
+                  : realtimeConnected
+                    ? "Online"
+                    : "Reconectando..."}
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-1">
             <Button size="icon" variant="ghost" onClick={() => setShowCreate(true)}>
@@ -395,6 +481,14 @@ export function ChatPage() {
           )}
           {chats.map((chat) => {
             const lastMessage = (messages[chat.id] || chat.messages || []).at(-1)
+            const otherUser =
+              chat.type === "private"
+                ? usersById.get(
+                    chat.participants.find(
+                      (participant) => participant.userId !== currentUser.id,
+                    )?.userId || "",
+                  )
+                : undefined
             return (
               <button
                 key={chat.id}
@@ -405,9 +499,17 @@ export function ChatPage() {
                     : "hover:bg-gray-50 dark:hover:bg-gray-800/50"
                 }`}
               >
-                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/10 font-bold text-primary">
-                  {chat.type === "group" ? <Users size={18} /> : chatName(chat)[0]}
-                </span>
+                {chat.type === "group" ? (
+                  <span className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/10 font-bold text-primary">
+                    <Users size={18} />
+                  </span>
+                ) : (
+                  <UserAvatar
+                    user={otherUser}
+                    online={Boolean(otherUser && onlineUserIds.has(otherUser.id))}
+                    className="size-11"
+                  />
+                )}
                 <span className="min-w-0">
                   <strong className="block truncate text-sm">{chatName(chat)}</strong>
                   <span className="block truncate text-xs text-gray-400">
@@ -535,10 +637,11 @@ export function ChatPage() {
           <div className="max-h-72 space-y-1 overflow-y-auto">
             {users.map((user) => {
               const selected = selectedUsers.includes(user.id)
+              const online = onlineUserIds.has(user.id)
               return (
                 <button
                   key={user.id}
-                  className={`w-full rounded-lg p-3 text-left text-sm ${
+                  className={`flex w-full items-center gap-3 rounded-lg p-3 text-left text-sm ${
                     selected ? "bg-primary/10" : "hover:bg-gray-100 dark:hover:bg-gray-800"
                   }`}
                   onClick={() =>
@@ -551,8 +654,18 @@ export function ChatPage() {
                     )
                   }
                 >
-                  <strong>{user.name}</strong>
-                  <span className="ml-2 text-xs text-gray-400">{user.email}</span>
+                  <UserAvatar user={user} online={online} />
+                  <span className="min-w-0 flex-1">
+                    <strong className="block truncate">{user.name}</strong>
+                    <span className="block truncate text-xs text-gray-400">
+                      {user.email}
+                    </span>
+                  </span>
+                  <span
+                    className={`text-xs ${online ? "text-green-500" : "text-gray-400"}`}
+                  >
+                    {online ? "Online" : "Offline"}
+                  </span>
                 </button>
               )
             })}
@@ -571,12 +684,25 @@ export function ChatPage() {
                 key={participant.userId}
                 className="flex items-center justify-between rounded-lg border p-3 dark:border-gray-800"
               >
-                <div>
-                  <strong className="text-sm">{userName(participant.userId)}</strong>
-                  <p className="flex items-center gap-1 text-xs text-gray-400">
-                    {participant.role === "admin" && <Shield size={12} />}
-                    {participant.role === "admin" ? "Administrador" : "Membro"}
-                  </p>
+                <div className="flex items-center gap-3">
+                  <UserAvatar
+                    user={
+                      participant.userId === currentUser.id
+                        ? currentUser
+                        : usersById.get(participant.userId)
+                    }
+                    online={
+                      participant.userId === currentUser.id ||
+                      onlineUserIds.has(participant.userId)
+                    }
+                  />
+                  <div>
+                    <strong className="text-sm">{userName(participant.userId)}</strong>
+                    <p className="flex items-center gap-1 text-xs text-gray-400">
+                      {participant.role === "admin" && <Shield size={12} />}
+                      {participant.role === "admin" ? "Administrador" : "Membro"}
+                    </p>
+                  </div>
                 </div>
                 {selectedChat.adminId === currentUser.id &&
                   participant.userId !== selectedChat.adminId && (
@@ -610,10 +736,27 @@ export function ChatPage() {
                     <button
                       key={user.id}
                       onClick={() => addMember(user.id)}
-                      className="w-full rounded-lg p-3 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
+                      className="flex w-full items-center gap-3 rounded-lg p-3 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
                     >
-                      <strong>{user.name}</strong>
-                      <span className="ml-2 text-xs text-gray-400">{user.email}</span>
+                      <UserAvatar
+                        user={user}
+                        online={onlineUserIds.has(user.id)}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <strong className="block truncate">{user.name}</strong>
+                        <span className="block truncate text-xs text-gray-400">
+                          {user.email}
+                        </span>
+                      </span>
+                      <span
+                        className={`text-xs ${
+                          onlineUserIds.has(user.id)
+                            ? "text-green-500"
+                            : "text-gray-400"
+                        }`}
+                      >
+                        {onlineUserIds.has(user.id) ? "Online" : "Offline"}
+                      </span>
                     </button>
                   ))}
               </div>
@@ -623,6 +766,72 @@ export function ChatPage() {
       )}
     </div>
   )
+}
+
+function UserAvatar({
+  user,
+  online,
+  className,
+}: {
+  user?: User | null
+  online?: boolean
+  className?: string
+}) {
+  const initials =
+    user?.name
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join("")
+      .toUpperCase() || "?"
+
+  return (
+    <Avatar className={className}>
+      {user?.avatarUrl && <AvatarImage src={user.avatarUrl} alt={user.name} />}
+      <AvatarFallback>{initials}</AvatarFallback>
+      {online !== undefined && (
+        <AvatarBadge className={online ? "bg-green-500" : "bg-gray-400"} />
+      )}
+    </Avatar>
+  )
+}
+
+function resizeAvatar(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error("Could not read avatar"))
+    reader.onload = () => {
+      const image = new Image()
+      image.onerror = () => reject(new Error("Invalid avatar image"))
+      image.onload = () => {
+        const scale = Math.min(1, 256 / Math.max(image.width, image.height))
+        const canvas = document.createElement("canvas")
+        canvas.width = Math.max(1, Math.round(image.width * scale))
+        canvas.height = Math.max(1, Math.round(image.height * scale))
+        const context = canvas.getContext("2d")
+        if (!context) {
+          reject(new Error("Canvas is unavailable"))
+          return
+        }
+        context.drawImage(image, 0, 0, canvas.width, canvas.height)
+
+        let quality = 0.82
+        let avatarUrl = canvas.toDataURL("image/webp", quality)
+        while (avatarUrl.length > 95_000 && quality > 0.35) {
+          quality -= 0.1
+          avatarUrl = canvas.toDataURL("image/webp", quality)
+        }
+        if (avatarUrl.length > 100_000) {
+          reject(new Error("Avatar is too large"))
+          return
+        }
+        resolve(avatarUrl)
+      }
+      image.src = reader.result as string
+    }
+    reader.readAsDataURL(file)
+  })
 }
 
 function Modal({

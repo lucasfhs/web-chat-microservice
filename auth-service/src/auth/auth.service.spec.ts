@@ -10,9 +10,12 @@ jest.mock('bcrypt');
 
 describe('AuthService', () => {
   const revokeToken = jest.fn();
+  const createUser = jest.fn();
   const usersService = {
     findByEmail: jest.fn(),
-    create: jest.fn(),
+    create: createUser,
+    updateAvatar: jest.fn(),
+    findOthers: jest.fn(),
   } as unknown as jest.Mocked<UsersService>;
   const jwtService = {
     signAsync: jest.fn(),
@@ -50,6 +53,40 @@ describe('AuthService', () => {
     ).resolves.toEqual({
       accessToken: 'signed-token',
       tokenType: 'Bearer',
+    });
+  });
+
+  it('registers a user without requiring an avatar', async () => {
+    const user = {
+      id: 'a06a0d88-6408-4aed-a422-4ca601ea537f',
+      name: 'New User',
+      email: 'new-user@example.com',
+      passwordHash: 'hash',
+      avatarUrl: null,
+      createdAt: new Date('2026-06-09T23:00:00.000Z'),
+    } as User;
+    usersService.findByEmail.mockResolvedValue(null);
+    usersService.create.mockResolvedValue(user);
+    jest.mocked(bcrypt.hash).mockResolvedValue('hash' as never);
+
+    await expect(
+      service.register({
+        name: user.name,
+        email: user.email,
+        password: 'password123',
+      }),
+    ).resolves.toEqual({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      avatarUrl: null,
+      createdAt: user.createdAt,
+    });
+
+    expect(createUser).toHaveBeenCalledWith({
+      name: user.name,
+      email: user.email,
+      passwordHash: 'hash',
     });
   });
 

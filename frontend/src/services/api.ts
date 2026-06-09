@@ -8,6 +8,7 @@ export interface User {
   id: string
   name: string
   email: string
+  avatarUrl: string | null
   createdAt?: string
 }
 
@@ -66,6 +67,9 @@ export const session = {
     localStorage.setItem(TOKEN_KEY, token)
     localStorage.setItem(USER_KEY, JSON.stringify(user))
   },
+  setUser: (user: User) => {
+    localStorage.setItem(USER_KEY, JSON.stringify(user))
+  },
   clear: () => {
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(USER_KEY)
@@ -97,6 +101,11 @@ export const authService = {
       params: search ? { search } : undefined,
     })
     return data
+  },
+  async updateAvatar(avatarUrl: string) {
+    const { data: user } = await api.put<User>("/auth/avatar", { avatarUrl })
+    session.setUser(user)
+    return user
   },
 }
 

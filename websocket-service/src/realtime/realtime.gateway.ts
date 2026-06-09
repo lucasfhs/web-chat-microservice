@@ -49,15 +49,26 @@ export class RealtimeGateway
       });
       client.data.user = payload;
       await client.join(`user:${payload.sub}`);
-      this.server.emit('user.online', { userId: payload.sub });
+      const userSockets = await this.server
+        .in(`user:${payload.sub}`)
+        .fetchSockets();
+      if (userSockets.length === 1) {
+        this.server.emit('user.online', { userId: payload.sub });
+      }
+      client.emit('presence.list', {
+        userIds: await this.getOnlineUserIds(),
+      });
     } catch {
       client.disconnect(true);
     }
   }
 
-  handleDisconnect(client: Socket): void {
+  async handleDisconnect(client: Socket): Promise<void> {
     const payload = client.data.user as JwtPayload | undefined;
-    if (payload) {
+    if (
+      payload &&
+      (await this.server.in(`user:${payload.sub}`).fetchSockets()).length === 0
+    ) {
       this.server.emit('user.offline', { userId: payload.sub });
     }
   }
@@ -65,6 +76,13 @@ export class RealtimeGateway
   @SubscribeMessage('ping')
   ping(@ConnectedSocket() client: Socket): void {
     client.emit('pong', { timestamp: new Date().toISOString() });
+  }
+
+  @SubscribeMessage('presence.get')
+  async presence(@ConnectedSocket() client: Socket): Promise<void> {
+    client.emit('presence.list', {
+      userIds: await this.getOnlineUserIds(),
+    });
   }
 
   emitEvent(event: RealtimeEvent): void {
@@ -97,5 +115,16 @@ export class RealtimeGateway
       throw new Error('Authentication token is required');
     }
     return token;
+  }
+
+  private async getOnlineUserIds(): Promise<string[]> {
+    const sockets = await this.server.fetchSockets();
+    return [
+      ...new Set(
+        sockets
+          .map((socket) => (socket.data.user as JwtPayload | undefined)?.sub)
+          .filter((userId): userId is string => Boolean(userId)),
+      ),
+    ];
   }
 }

@@ -39,4 +39,9 @@ export class UsersService {
   create(data: UserCreationAttributes): Promise<User> {
     return this.userModel.create(data);
   }
+
+  async updateAvatar(user: User, avatarUrl: string): Promise<User> {
+    user.avatarUrl = avatarUrl;
+    return user.save();
+  }
 }

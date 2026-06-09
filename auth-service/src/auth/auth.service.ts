@@ -18,6 +18,7 @@ export interface PublicUser {
   id: string;
   name: string;
   email: string;
+  avatarUrl: string | null;
   createdAt: Date;
 }
 
@@ -86,11 +87,17 @@ export class AuthService {
     return users.map((user) => this.toPublicUser(user));
   }
 
+  async updateAvatar(user: User, avatarUrl: string): Promise<PublicUser> {
+    const updatedUser = await this.usersService.updateAvatar(user, avatarUrl);
+    return this.toPublicUser(updatedUser);
+  }
+
   toPublicUser(user: User): PublicUser {
     return {
       id: user.id,
       name: user.name,
       email: user.email,
+      avatarUrl: user.avatarUrl,
       createdAt: user.createdAt,
     };
   }
