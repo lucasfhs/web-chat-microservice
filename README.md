@@ -346,13 +346,3 @@ Simular:
 * Login simultâneo
 * Troca de mensagens simultânea
 
-
-# Trabalho Futuro
-
-* Kubernetes
-* Replicação de Banco
-* Balanceamento de Carga
-* Notificações Push
-* Upload de Arquivos
-* Criptografia ponta a ponta
-
