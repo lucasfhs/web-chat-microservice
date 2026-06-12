@@ -406,7 +406,13 @@ npm run test:e2e:realtime
 
 Os manifests iniciais estão em `k8s/`. Eles incluem Services internos,
 probes, ConfigMap, Secret, persistência do PostgreSQL e duas réplicas para o
-Gateway, WebSocket Service e frontend. Consulte `k8s/README.md`.
+Gateway, WebSocket Service e frontend.
+
+Para instalar e executar o ambiente Kubernetes localmente no Windows com
+Docker Desktop, incluindo escala manual e HPA, consulte
+[`KUBERNETES_LOCAL.md`](KUBERNETES_LOCAL.md).
+
+Para uma visão resumida dos manifests, consulte `k8s/README.md`.
 
 Para publicar as imagens no ECR e fazer o deploy no Amazon EKS, consulte
 `DEPLOY_AWS_EKS.md`.
