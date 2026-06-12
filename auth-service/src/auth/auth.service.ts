@@ -18,6 +18,7 @@ export interface PublicUser {
   id: string;
   name: string;
   email: string;
+  avatarUrl: string | null;
   createdAt: Date;
 }
 
@@ -81,11 +82,22 @@ export class AuthService {
     await this.redisService.revokeToken(token, payload.exp);
   }
 
+  async listUsers(userId: string, search?: string): Promise<PublicUser[]> {
+    const users = await this.usersService.findOthers(userId, search?.trim());
+    return users.map((user) => this.toPublicUser(user));
+  }
+
+  async updateAvatar(user: User, avatarUrl: string): Promise<PublicUser> {
+    const updatedUser = await this.usersService.updateAvatar(user, avatarUrl);
+    return this.toPublicUser(updatedUser);
+  }
+
   toPublicUser(user: User): PublicUser {
     return {
       id: user.id,
       name: user.name,
       email: user.email,
+      avatarUrl: user.avatarUrl,
       createdAt: user.createdAt,
     };
   }

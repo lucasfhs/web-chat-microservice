@@ -5,12 +5,15 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  Put,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
 import { AuthService, LoginResult, PublicUser } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { UpdateAvatarDto } from './dto/update-avatar.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AuthenticatedRequest } from './interfaces/authenticated-request.interface';
 
@@ -40,5 +43,28 @@ export class AuthController {
   @Get('validate')
   validate(@Req() request: AuthenticatedRequest): PublicUser {
     return this.authService.toPublicUser(request.user);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Put('avatar')
+  updateAvatar(
+    @Req() request: AuthenticatedRequest,
+    @Body() dto: UpdateAvatarDto,
+  ): Promise<PublicUser> {
+    return this.authService.updateAvatar(request.user, dto.avatarUrl);
+  }
+
+  @Get('health')
+  health(): Record<string, string> {
+    return { status: 'ok', service: 'auth-service' };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('users')
+  async users(
+    @Req() request: AuthenticatedRequest,
+    @Query('search') search?: string,
+  ): Promise<PublicUser[]> {
+    return this.authService.listUsers(request.user.id, search);
   }
 }

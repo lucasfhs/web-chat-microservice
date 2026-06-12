@@ -1,783 +1,859 @@
-import { useState, useRef, useEffect } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import {
+  Camera,
+  Check,
+  CheckCheck,
+  CircleAlert,
+  Clock,
+  LogOut,
+  MessageSquare,
+  Plus,
+  Send,
+  Shield,
+  UserMinus,
+  UserPlus,
+  Users,
+  X,
+} from "lucide-react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import {
-  Search,
-  Send,
-  Paperclip,
-  Smile,
-  MoreVertical,
-  Users,
-  User,
-  MessageSquare,
-  LogOut,
-  Plus,
-  CheckCheck,
-  X,
-  ArrowLeft,
-  CircleDot,
-} from "lucide-react"
+import type { Socket } from "socket.io-client"
 
 import { Button } from "@/components/ui/button"
+import {
+  Avatar,
+  AvatarBadge,
+  AvatarFallback,
+  AvatarImage,
+} from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
 import { ThemeToggle } from "@/components/ui/themeToggle"
-import { cn } from "@/lib/utils"
+import {
+  authService,
+  chatService,
+  connectRealtime,
+  session,
+  type Chat,
+  type Message,
+  type User,
+} from "@/services/api"
 
-// Tipagens do Chat
-interface Message {
-  id: string
-  senderName: string
-  text?: string
-  imageUrl?: string
-  timestamp: string
-  isMe: boolean
+interface ReadEvent {
+  chatId: string
+  messageIds: string[]
+  readBy: string
+  readAt: string
 }
 
-interface Chat {
-  id: string
-  name: string
-  type: "private" | "group"
-  avatar: string
-  lastMessage?: string
-  lastMessageTime?: string
-  unreadCount: number
-  messages: Message[]
-  participants: string[]
+interface RemovedEvent {
+  chatId: string
+  removedUserId: string
 }
 
-// Contatos mockados para novas conversas
-const MOCK_CONTACTS = [
-  { name: "Lucas FHS", email: "lucas@example.com", avatar: "L" },
-  { name: "Maria Silva", email: "maria@example.com", avatar: "M" },
-  { name: "Aline Santos", email: "aline@example.com", avatar: "A" },
-  { name: "Carlinhos", email: "carlinhos@example.com", avatar: "F" },
-  { name: "Juliana Lima", email: "juliana@example.com", avatar: "J" },
-]
+interface PresenceEvent {
+  userId: string
+}
 
-// Lista inicial de chats
-const INITIAL_CHATS: Chat[] = [
-  {
-    id: "group-1",
-    name: "Trabalho de Sistemas Distribuídos",
-    type: "group",
-    avatar: "TSD",
-    lastMessage: "Felipe: Vocês terminaram a parte do frontend?",
-    lastMessageTime: "18:42",
-    unreadCount: 2,
-    participants: ["Lucas FHS", "Carlinhos", "Aline Santos"],
-    messages: [
-      {
-        id: "m1",
-        senderName: "Aline Santos",
-        text: "Oi gente, criei a estrutura do projeto backend.",
-        timestamp: "18:30",
-        isMe: false,
-      },
-      {
-        id: "m2",
-        senderName: "Felipe Souza",
-        text: "Vocês terminaram a parte do frontend?",
-        timestamp: "18:42",
-        isMe: false,
-      },
-    ],
-  },
-  {
-    id: "private-1",
-    name: "Maria Silva",
-    type: "private",
-    avatar: "M",
-    lastMessage: "Perfeito, nos vemos na aula amanhã!",
-    lastMessageTime: "17:15",
-    unreadCount: 0,
-    participants: ["Maria Silva"],
-    messages: [
-      {
-        id: "m3",
-        senderName: "Maria Silva",
-        text: "Você pode me ajudar com o deploy mais tarde?",
-        timestamp: "17:10",
-        isMe: false,
-      },
-      {
-        id: "m4",
-        senderName: "Você",
-        text: "Claro! Pelas 19h te dou um toque.",
-        timestamp: "17:12",
-        isMe: true,
-      },
-      {
-        id: "m5",
-        senderName: "Maria Silva",
-        text: "Perfeito, nos vemos na aula amanhã!",
-        timestamp: "17:15",
-        isMe: false,
-      },
-    ],
-  },
-]
+interface PresenceListEvent {
+  userIds: string[]
+}
 
 export function ChatPage() {
   const navigate = useNavigate()
-  
-  // Estados principais
-  const [chats, setChats] = useState<Chat[]>(INITIAL_CHATS)
-  const [selectedChatId, setSelectedChatId] = useState<string | null>(null)
-  const [searchQuery, setSearchQuery] = useState("")
-  const [inputText, setInputText] = useState("")
-  const [typingChatId, setTypingChatId] = useState<string | null>(null)
-
-  // Estados dos Modais
-  const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false)
-  const [isNewGroupModalOpen, setIsNewGroupModalOpen] = useState(false)
-
-  // Estados de criação de Grupo
-  const [newGroupName, setNewGroupName] = useState("")
-  const [selectedGroupParticipants, setSelectedGroupParticipants] = useState<string[]>([])
-
-  // Referência para scroll automático
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-
-  // Encontra o chat selecionado
-  const activeChat = chats.find((c) => c.id === selectedChatId)
-
-  // Rolagem automática para a última mensagem
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [activeChat?.messages, typingChatId])
-
-  // Limpa notificações pendentes do chat selecionado
-  useEffect(() => {
-    if (selectedChatId) {
-      setChats((prevChats) =>
-        prevChats.map((chat) =>
-          chat.id === selectedChatId ? { ...chat, unreadCount: 0 } : chat
-        )
-      )
-    }
-  }, [selectedChatId])
-
-  // Formata hora atual
-  const getFormattedTime = () => {
-    const now = new Date()
-    return now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-  }
-
-  // Filtragem de conversas
-  const filteredChats = chats.filter((chat) =>
-    chat.name.toLowerCase().includes(searchQuery.toLowerCase())
+  const [currentUser, setCurrentUser] = useState(() => session.getUser())
+  const [users, setUsers] = useState<User[]>([])
+  const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set())
+  const [chats, setChats] = useState<Chat[]>([])
+  const [messages, setMessages] = useState<Record<string, Message[]>>({})
+  const [realtimeConnected, setRealtimeConnected] = useState(false)
+  const [pageVisible, setPageVisible] = useState(
+    () => document.visibilityState === "visible",
   )
+  const [selectedChatId, setSelectedChatId] = useState<string | null>(null)
+  const [input, setInput] = useState("")
+  const [showCreate, setShowCreate] = useState(false)
+  const [showMembers, setShowMembers] = useState(false)
+  const [groupMode, setGroupMode] = useState(false)
+  const [groupName, setGroupName] = useState("")
+  const [selectedUsers, setSelectedUsers] = useState<string[]>([])
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const avatarInputRef = useRef<HTMLInputElement>(null)
 
-  // Envia mensagem de texto
-  const handleSendMessage = () => {
-    if (!inputText.trim() || !selectedChatId) return
+  const usersById = useMemo(
+    () => new Map(users.map((user) => [user.id, user])),
+    [users],
+  )
+  const currentUserId = currentUser?.id
+  const selectedChat = chats.find((chat) => chat.id === selectedChatId)
+  const selectedMessages = selectedChatId ? messages[selectedChatId] || [] : []
 
-    const newMsg: Message = {
-      id: `user-m-${Date.now()}`,
-      senderName: "Você",
-      text: inputText,
-      timestamp: getFormattedTime(),
-      isMe: true,
-    }
-
-    // Adiciona a mensagem ao chat ativo
-    updateChatMessages(selectedChatId, newMsg, inputText)
-    setInputText("")
-
-    // Simula resposta automática depois de 1.5s
-    triggerMockReply(selectedChatId, inputText)
+  const upsertChat = (chat: Chat) => {
+    setChats((previous) => {
+      const withoutChat = previous.filter((item) => item.id !== chat.id)
+      return [chat, ...withoutChat]
+    })
   }
 
-  // Envia imagem
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file || !selectedChatId) return
-
-    const imageUrl = URL.createObjectURL(file)
-    const newMsg: Message = {
-      id: `user-img-${Date.now()}`,
-      senderName: "Você",
-      imageUrl,
-      timestamp: getFormattedTime(),
-      isMe: true,
+  useEffect(() => {
+    if (!currentUserId || !session.getToken()) {
+      navigate("/login")
+      return
     }
-
-    updateChatMessages(selectedChatId, newMsg, "📸 Imagem enviada")
-
-    // Resposta simulada para imagem
-    triggerMockReply(selectedChatId, "imagem")
-  }
-
-  // Auxiliar para atualizar mensagens de um chat
-  const updateChatMessages = (chatId: string, message: Message, lastMsgText: string) => {
-    setChats((prevChats) =>
-      prevChats.map((chat) => {
-        if (chat.id === chatId) {
-          const updatedMsgs = [...chat.messages, message]
-          return {
-            ...chat,
-            messages: updatedMsgs,
-            lastMessage: message.isMe ? lastMsgText : `${message.senderName}: ${lastMsgText}`,
-            lastMessageTime: message.timestamp,
-          }
-        }
-        return chat
+    Promise.all([authService.users(), chatService.list()])
+      .then(([availableUsers, availableChats]) => {
+        setUsers(availableUsers)
+        setChats(availableChats)
       })
-    )
-  }
+      .catch(() => {
+        session.clear()
+        navigate("/login")
+      })
+  }, [currentUserId, navigate])
 
-  // Simula digitação e resposta do contato/membro do grupo
-  const triggerMockReply = (chatId: string, userMsg: string) => {
-    setTypingChatId(chatId)
+  useEffect(() => {
+    if (!currentUserId) return
+    const socket: Socket = connectRealtime()
 
-    setTimeout(() => {
-      setTypingChatId(null)
-      const currentChat = chats.find((c) => c.id === chatId)
-      if (!currentChat) return
-
-      let replyText = "Legal! O que você acha de marcarmos uma chamada?"
-      let responder = currentChat.type === "private" ? currentChat.name : "Aline Santos"
-
-      if (userMsg.toLowerCase().includes("ajuda") || userMsg.toLowerCase().includes("deploy")) {
-        replyText = "Claro, posso ajudar sim. Qual erro está acontecendo?"
-      } else if (userMsg.toLowerCase().includes("aula") || userMsg.toLowerCase().includes("amanhã")) {
-        replyText = "A aula amanhã começa às 19h no bloco B!"
-      } else if (userMsg === "imagem") {
-        replyText = "Ficou excelente essa imagem!"
+    socket.on("connect", () => {
+      setRealtimeConnected(true)
+      socket.emit("presence.get")
+    })
+    socket.on("disconnect", () => {
+      setRealtimeConnected(false)
+      setOnlineUserIds(new Set())
+    })
+    socket.on("connect_error", () => setRealtimeConnected(false))
+    socket.io.on("reconnect", () => {
+      setMessages({})
+      void chatService.list().then(setChats).catch(() => undefined)
+      void authService.users().then(setUsers).catch(() => undefined)
+    })
+    socket.on("presence.list", (event: PresenceListEvent) => {
+      setOnlineUserIds(new Set(event.userIds))
+    })
+    socket.on("user.online", (event: PresenceEvent) => {
+      setOnlineUserIds((previous) => new Set(previous).add(event.userId))
+      void authService.users().then(setUsers).catch(() => undefined)
+    })
+    socket.on("user.offline", (event: PresenceEvent) => {
+      setOnlineUserIds((previous) => {
+        const updated = new Set(previous)
+        updated.delete(event.userId)
+        return updated
+      })
+      void authService.users().then(setUsers).catch(() => undefined)
+    })
+    socket.on("message.created", (message: Message) => {
+      setMessages((previous) => {
+        const existing = previous[message.chatId] || []
+        if (existing.some((item) => item.id === message.id)) return previous
+        return {
+          ...previous,
+          [message.chatId]: [
+            ...existing,
+            { ...message, deliveryStatus: "sent" },
+          ],
+        }
+      })
+      setChats((previous) => {
+        if (!previous.some((chat) => chat.id === message.chatId)) {
+          void chatService.list().then(setChats).catch(() => undefined)
+        }
+        return [...previous].sort((a, b) =>
+          a.id === message.chatId ? -1 : b.id === message.chatId ? 1 : 0,
+        )
+      })
+    })
+    socket.on("message.read", (event: ReadEvent) => {
+      const ids = new Set(event.messageIds)
+      setMessages((previous) => ({
+        ...previous,
+        [event.chatId]: (previous[event.chatId] || []).map((message) =>
+          ids.has(message.id) && !message.readBy.includes(event.readBy)
+            ? { ...message, readBy: [...message.readBy, event.readBy] }
+            : message,
+        ),
+      }))
+    })
+    socket.on("chat.created", (chat: Chat) => {
+      upsertChat(chat)
+      if (chat.adminId !== currentUserId) {
+        toast.info(`Você foi adicionado ao grupo ${chat.name || ""}.`)
       }
-
-      const replyMsg: Message = {
-        id: `reply-${Date.now()}`,
-        senderName: responder,
-        text: replyText,
-        timestamp: getFormattedTime(),
-        isMe: false,
-      }
-
-      setChats((prevChats) =>
-        prevChats.map((chat) => {
-          if (chat.id === chatId) {
-            const updatedMsgs = [...chat.messages, replyMsg]
-            return {
-              ...chat,
-              messages: updatedMsgs,
-              lastMessage: chat.type === "private" ? replyText : `${responder}: ${replyText}`,
-              lastMessageTime: replyMsg.timestamp,
-              unreadCount: selectedChatId === chatId ? 0 : chat.unreadCount + 1,
-            }
-          }
-          return chat
+    })
+    socket.on("participant.added", (chat: Chat) => {
+      upsertChat(chat)
+    })
+    socket.on("participant.removed", (event: RemovedEvent) => {
+      if (event.removedUserId === currentUserId) {
+        setChats((previous) =>
+          previous.filter((chat) => chat.id !== event.chatId),
+        )
+        setMessages((previous) => {
+          const updated = { ...previous }
+          delete updated[event.chatId]
+          return updated
         })
-      )
-    }, 1500)
+        setSelectedChatId((selected) =>
+          selected === event.chatId ? null : selected,
+        )
+        setShowMembers(false)
+        toast.warning("Você foi removido de um grupo.")
+        return
+      }
+      void chatService.list().then(setChats).catch(() => undefined)
+    })
+
+    return () => {
+      socket.io.removeAllListeners()
+      socket.removeAllListeners()
+      socket.disconnect()
+    }
+  }, [currentUserId])
+
+  useEffect(() => {
+    const handleVisibility = () =>
+      setPageVisible(document.visibilityState === "visible")
+    document.addEventListener("visibilitychange", handleVisibility)
+    return () =>
+      document.removeEventListener("visibilitychange", handleVisibility)
+  }, [])
+
+  useEffect(() => {
+    if (!selectedChatId || messages[selectedChatId]) return
+    chatService
+      .messages(selectedChatId)
+      .then((history) => {
+        setMessages((previous) => {
+          const realtimeMessages = previous[selectedChatId] || []
+          const merged = new Map(
+            [...history, ...realtimeMessages].map((message) => [
+              message.id,
+              { ...message, deliveryStatus: "sent" as const },
+            ]),
+          )
+          return {
+            ...previous,
+            [selectedChatId]: [...merged.values()].sort(
+              (a, b) =>
+                new Date(a.createdAt).getTime() -
+                new Date(b.createdAt).getTime(),
+            ),
+          }
+        })
+      })
+      .catch(() => toast.error("Não foi possível carregar as mensagens."))
+  }, [messages, selectedChatId])
+
+  useEffect(() => {
+    if (!selectedChatId || !selectedMessages.length || !pageVisible) return
+    void chatService.markRead(selectedChatId).then((receipt) => {
+      if (!receipt.messageIds.length) return
+      const ids = new Set(receipt.messageIds)
+      setMessages((previous) => ({
+        ...previous,
+        [selectedChatId]: (previous[selectedChatId] || []).map((message) =>
+          ids.has(message.id) && !message.readBy.includes(receipt.readBy)
+            ? { ...message, readBy: [...message.readBy, receipt.readBy] }
+            : message,
+        ),
+      }))
+    })
+  }, [pageVisible, selectedChatId, selectedMessages.length])
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [selectedMessages.length])
+
+  const userName = (userId: string) => {
+    if (userId === currentUser?.id) return currentUser.name
+    return usersById.get(userId)?.name || "Usuário"
   }
 
-  // Cria nova conversa 1:1
-  const handleStartPrivateChat = (contactName: string) => {
-    // Verifica se conversa já existe
-    const existingChat = chats.find(
-      (c) => c.type === "private" && c.name === contactName
-    )
-
-    if (existingChat) {
-      setSelectedChatId(existingChat.id)
-      setIsNewChatModalOpen(false)
-      return
-    }
-
-    const newChat: Chat = {
-      id: `private-${Date.now()}`,
-      name: contactName,
-      type: "private",
-      avatar: contactName.charAt(0),
-      unreadCount: 0,
-      participants: [contactName],
-      messages: [],
-    }
-
-    setChats((prev) => [newChat, ...prev])
-    setSelectedChatId(newChat.id)
-    setIsNewChatModalOpen(false)
-    toast.success(`Conversa com ${contactName} iniciada!`)
+  const chatName = (chat: Chat) => {
+    if (chat.type === "group") return chat.name || "Grupo"
+    const otherId = chat.participants.find(
+      (participant) => participant.userId !== currentUser?.id,
+    )?.userId
+    return otherId ? userName(otherId) : "Conversa privada"
   }
 
-  // Cria novo grupo 1:N
-  const handleCreateGroup = () => {
-    if (!newGroupName.trim()) {
-      toast.error("Por favor, digite o nome do grupo.")
-      return
+  const sendMessage = async () => {
+    if (!selectedChatId || !input.trim() || !currentUser) return
+    const content = input.trim()
+    const temporaryId = `pending-${crypto.randomUUID()}`
+    const pendingMessage: Message = {
+      id: temporaryId,
+      chatId: selectedChatId,
+      senderId: currentUser.id,
+      content,
+      createdAt: new Date().toISOString(),
+      readBy: [],
+      deliveryStatus: "pending",
     }
-    if (selectedGroupParticipants.length === 0) {
+    setInput("")
+    setMessages((previous) => ({
+      ...previous,
+      [selectedChatId]: [
+        ...(previous[selectedChatId] || []),
+        pendingMessage,
+      ],
+    }))
+    try {
+      const message = await chatService.sendMessage(selectedChatId, content)
+      setMessages((previous) => {
+        const withoutPending = (previous[selectedChatId] || []).filter(
+          (item) => item.id !== temporaryId,
+        )
+        const alreadyReceived = withoutPending.some(
+          (item) => item.id === message.id,
+        )
+        return {
+          ...previous,
+          [selectedChatId]: alreadyReceived
+            ? withoutPending
+            : [
+                ...withoutPending,
+                { ...message, deliveryStatus: "sent" },
+              ],
+        }
+      })
+    } catch {
+      setMessages((previous) => ({
+        ...previous,
+        [selectedChatId]: (previous[selectedChatId] || []).map((message) =>
+          message.id === temporaryId
+            ? { ...message, deliveryStatus: "failed" }
+            : message,
+        ),
+      }))
+      toast.error("Não foi possível enviar a mensagem.")
+    }
+  }
+
+  const createChat = async () => {
+    if (!selectedUsers.length) {
       toast.error("Selecione pelo menos um participante.")
       return
     }
-
-    const newGroup: Chat = {
-      id: `group-${Date.now()}`,
-      name: newGroupName,
-      type: "group",
-      avatar: newGroupName.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 3),
-      unreadCount: 0,
-      participants: ["Você", ...selectedGroupParticipants],
-      messages: [
-        {
-          id: `sys-${Date.now()}`,
-          senderName: "Sistema",
-          text: `Grupo criado com os participantes: ${selectedGroupParticipants.join(", ")}`,
-          timestamp: getFormattedTime(),
-          isMe: false,
-        },
-      ],
-      lastMessage: "Grupo criado",
-      lastMessageTime: getFormattedTime(),
+    if (groupMode && !groupName.trim()) {
+      toast.error("Informe o nome do grupo.")
+      return
     }
-
-    setChats((prev) => [newGroup, ...prev])
-    setSelectedChatId(newGroup.id)
-    
-    // Reseta form do grupo
-    setNewGroupName("")
-    setSelectedGroupParticipants([])
-    setIsNewGroupModalOpen(false)
-    toast.success("Grupo criado com sucesso!")
+    try {
+      const chat = await chatService.create({
+        type: groupMode ? "group" : "private",
+        name: groupMode ? groupName.trim() : undefined,
+        participantIds: groupMode ? selectedUsers : [selectedUsers[0]],
+      })
+      upsertChat(chat)
+      setSelectedChatId(chat.id)
+      closeCreate()
+    } catch {
+      toast.error("Não foi possível criar a conversa.")
+    }
   }
 
-  const toggleParticipantSelection = (name: string) => {
-    setSelectedGroupParticipants((prev) =>
-      prev.includes(name) ? prev.filter((p) => p !== name) : [...prev, name]
+  const addMember = async (userId: string) => {
+    if (!selectedChat) return
+    try {
+      await chatService.addParticipant(selectedChat.id, userId)
+      toast.success("Participante adicionado.")
+    } catch {
+      toast.error("Não foi possível adicionar o participante.")
+    }
+  }
+
+  const removeMember = async (userId: string) => {
+    if (!selectedChat) return
+    try {
+      await chatService.removeParticipant(selectedChat.id, userId)
+      toast.success("Participante removido.")
+    } catch {
+      toast.error("Não foi possível remover o participante.")
+    }
+  }
+
+  const closeCreate = () => {
+    setShowCreate(false)
+    setGroupMode(false)
+    setGroupName("")
+    setSelectedUsers([])
+  }
+
+  const logout = async () => {
+    await authService.logout()
+    navigate("/login")
+  }
+
+  const uploadAvatar = async (file?: File) => {
+    if (!file) return
+    if (!file.type.startsWith("image/")) {
+      toast.error("Selecione um arquivo de imagem.")
+      return
+    }
+    setUploadingAvatar(true)
+    try {
+      const avatarUrl = await resizeAvatar(file)
+      const user = await authService.updateAvatar(avatarUrl)
+      setCurrentUser(user)
+      toast.success("Avatar atualizado.")
+    } catch {
+      toast.error("Não foi possível atualizar o avatar.")
+    } finally {
+      setUploadingAvatar(false)
+      if (avatarInputRef.current) avatarInputRef.current.value = ""
+    }
+  }
+
+  const isMessageRead = (message: Message, chat: Chat) => {
+    const expectedReaders = chat.participants
+      .map((participant) => participant.userId)
+      .filter((userId) => userId !== message.senderId)
+    return (
+      expectedReaders.length > 0 &&
+      expectedReaders.every((userId) => message.readBy.includes(userId))
     )
   }
 
+  if (!currentUser) return null
+
   return (
-    <div className="flex h-screen w-full bg-gray-100 dark:bg-gray-950 overflow-hidden relative">
-      
-      {/* SIDEBAR */}
-      <aside className={cn(
-        "w-full md:w-[380px] lg:w-[420px] flex flex-col border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shrink-0",
-        selectedChatId && "hidden md:flex"
-      )}>
-        
-        {/* Sidebar Header */}
-        <div className="h-16 px-4 bg-gray-50 dark:bg-gray-900/60 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary text-lg">
-              U
-            </div>
-            <div>
-              <h3 className="font-semibold text-sm leading-none text-foreground">Você (Usuário)</h3>
-              <span className="text-[11px] text-green-500 font-medium flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                Online
+    <div className="flex h-screen bg-gray-100 dark:bg-gray-950">
+      <aside
+        className={`w-full max-w-sm flex-col border-r bg-white dark:border-gray-800 dark:bg-gray-900 ${
+          selectedChatId ? "hidden md:flex" : "flex"
+        }`}
+      >
+        <header className="flex h-16 items-center justify-between border-b px-4 dark:border-gray-800">
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              type="button"
+              className="group relative rounded-full"
+              onClick={() => avatarInputRef.current?.click()}
+              disabled={uploadingAvatar}
+              aria-label="Alterar avatar"
+            >
+              <UserAvatar user={currentUser} className="size-10" />
+              <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100">
+                <Camera size={16} />
               </span>
-            </div>
-          </div>
-          
-          {/* Botões de Ação */}
-          <div className="flex items-center gap-1 text-gray-500 dark:text-gray-400">
-            <button
-              onClick={() => setIsNewChatModalOpen(true)}
-              title="Nova conversa privada (1:1)"
-              className="p-2 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-full transition-colors"
-            >
-              <MessageSquare size={20} />
             </button>
-            <button
-              onClick={() => setIsNewGroupModalOpen(true)}
-              title="Novo grupo (1:N)"
-              className="p-2 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-full transition-colors"
-            >
-              <Users size={20} />
-            </button>
-            <ThemeToggle />
-            <button
-              onClick={() => {
-                toast.success("Desconectado com sucesso!")
-                navigate("/")
-              }}
-              title="Sair"
-              className="p-2 hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-500 rounded-full transition-colors"
-            >
-              <LogOut size={20} />
-            </button>
-          </div>
-        </div>
-
-        {/* Search Bar */}
-        <div className="p-3 bg-white dark:bg-gray-900 border-b border-gray-100 dark:border-gray-800">
-          <div className="relative flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg px-3 py-1.5">
-            <Search size={18} className="text-gray-400 mr-2" />
             <input
-              type="text"
-              placeholder="Pesquisar ou começar uma nova conversa"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-transparent text-sm w-full outline-none text-foreground placeholder:text-gray-400"
+              ref={avatarInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(event) => void uploadAvatar(event.target.files?.[0])}
             />
-            {searchQuery && (
-              <button onClick={() => setSearchQuery("")} className="text-gray-400 hover:text-foreground">
-                <X size={16} />
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Chats List */}
-        <div className="flex-1 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-800/50">
-          {filteredChats.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center text-gray-400 dark:text-gray-500">
-              <CircleDot size={40} className="mb-2 opacity-50" />
-              <p className="text-sm">Nenhuma conversa encontrada</p>
+            <div className="min-w-0">
+              <strong className="block truncate">{currentUser.name}</strong>
+              <p
+                className={`text-xs ${
+                  realtimeConnected ? "text-green-500" : "text-amber-500"
+                }`}
+              >
+                {uploadingAvatar
+                  ? "Atualizando avatar..."
+                  : realtimeConnected
+                    ? "Online"
+                    : "Reconectando..."}
+              </p>
             </div>
-          ) : (
-            filteredChats.map((chat) => {
-              const isSelected = chat.id === selectedChatId
-              return (
-                <div
-                  key={chat.id}
-                  onClick={() => setSelectedChatId(chat.id)}
-                  className={cn(
-                    "flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors relative",
-                    isSelected
-                      ? "bg-gray-100 dark:bg-gray-800"
-                      : "hover:bg-gray-50 dark:hover:bg-gray-800/40"
-                  )}
-                >
-                  {/* Avatar com indicador de tipo */}
-                  <div className="relative">
-                    <div className="w-12 h-12 rounded-full bg-primary/5 dark:bg-primary/20 border border-gray-100 dark:border-gray-700 flex items-center justify-center font-bold text-primary">
-                      {chat.avatar}
-                    </div>
-                    <span className="absolute -bottom-1 -right-1 p-0.5 bg-white dark:bg-gray-900 rounded-full shadow-xs">
-                      {chat.type === "group" ? (
-                        <Users size={12} className="text-blue-500" />
-                      ) : (
-                        <User size={12} className="text-green-500" />
-                      )}
-                    </span>
-                  </div>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button size="icon" variant="ghost" onClick={() => setShowCreate(true)}>
+              <Plus size={18} />
+            </Button>
+            <ThemeToggle />
+            <Button size="icon" variant="ghost" onClick={logout}>
+              <LogOut size={18} />
+            </Button>
+          </div>
+        </header>
 
-                  {/* Detalhes do Chat */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <h4 className="font-medium text-sm text-foreground truncate">{chat.name}</h4>
-                      {chat.lastMessageTime && (
-                        <span className="text-[11px] text-gray-400">{chat.lastMessageTime}</span>
-                      )}
-                    </div>
-                    <p className="text-xs text-gray-400 truncate mt-0.5">
-                      {chat.lastMessage || "Nenhuma mensagem enviada"}
-                    </p>
-                  </div>
-
-                  {/* Badge Não Lida */}
-                  {chat.unreadCount > 0 && (
-                    <span className="w-5 h-5 rounded-full bg-green-500 text-white font-bold text-[10px] flex items-center justify-center shrink-0">
-                      {chat.unreadCount}
-                    </span>
-                  )}
-                </div>
-              )
-            })
+        <div className="flex-1 overflow-y-auto">
+          {chats.length === 0 && (
+            <div className="p-8 text-center text-sm text-gray-400">
+              Nenhuma conversa. Crie uma para começar.
+            </div>
           )}
+          {chats.map((chat) => {
+            const lastMessage = (messages[chat.id] || chat.messages || []).at(-1)
+            const otherUser =
+              chat.type === "private"
+                ? usersById.get(
+                    chat.participants.find(
+                      (participant) => participant.userId !== currentUser.id,
+                    )?.userId || "",
+                  )
+                : undefined
+            return (
+              <button
+                key={chat.id}
+                onClick={() => setSelectedChatId(chat.id)}
+                className={`flex w-full items-center gap-3 border-b p-4 text-left dark:border-gray-800 ${
+                  selectedChatId === chat.id
+                    ? "bg-gray-100 dark:bg-gray-800"
+                    : "hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                }`}
+              >
+                {chat.type === "group" ? (
+                  <span className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/10 font-bold text-primary">
+                    <Users size={18} />
+                  </span>
+                ) : (
+                  <UserAvatar
+                    user={otherUser}
+                    online={Boolean(otherUser && onlineUserIds.has(otherUser.id))}
+                    className="size-11"
+                  />
+                )}
+                <span className="min-w-0">
+                  <strong className="block truncate text-sm">{chatName(chat)}</strong>
+                  <span className="block truncate text-xs text-gray-400">
+                    {lastMessage?.content || "Sem mensagens"}
+                  </span>
+                </span>
+              </button>
+            )
+          })}
         </div>
       </aside>
 
-      {/* CHAT CONTENT */}
-      <main className={cn(
-        "flex-1 flex flex-col bg-gray-50 dark:bg-gray-950 h-full relative",
-        !selectedChatId && "hidden md:flex"
-      )}>
-        
-        {activeChat ? (
+      <main className={`flex-1 flex-col ${selectedChatId ? "flex" : "hidden md:flex"}`}>
+        {selectedChat ? (
           <>
-            {/* Header do Chat Ativo */}
-            <div className="h-16 px-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex items-center justify-between z-10 shrink-0">
-              <div className="flex items-center gap-3 min-w-0">
-                <button
-                  onClick={() => setSelectedChatId(null)}
-                  className="p-1 md:hidden text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full"
-                >
-                  <ArrowLeft size={20} />
-                </button>
-                
-                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary shrink-0">
-                  {activeChat.avatar}
-                </div>
-
-                <div className="min-w-0">
-                  <h3 className="font-semibold text-sm text-foreground truncate">{activeChat.name}</h3>
-                  <p className="text-[11px] text-gray-400 truncate">
-                    {activeChat.type === "group"
-                      ? `${activeChat.participants.length} participantes: ${activeChat.participants.join(", ")}`
-                      : "Online"}
+            <header className="flex h-16 items-center justify-between border-b bg-white px-5 dark:border-gray-800 dark:bg-gray-900">
+              <div>
+                <strong>{chatName(selectedChat)}</strong>
+                {selectedChat.type === "group" && (
+                  <p className="text-xs text-gray-400">
+                    {selectedChat.participants.length} participantes
                   </p>
-                </div>
+                )}
               </div>
-
-              <div className="flex items-center text-gray-500 dark:text-gray-400">
-                <ThemeToggle />
-                <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors">
-                  <Search size={18} />
-                </button>
-                <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors">
-                  <MoreVertical size={18} />
-                </button>
-              </div>
-            </div>
-
-            {/* Mensagens Scroll Area */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#efeae2] dark:bg-gray-950/80 bg-opacity-40">
-              {activeChat.messages.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-gray-400 text-xs">
-                  Sem mensagens nesta conversa. Envie uma para começar!
-                </div>
-              ) : (
-                activeChat.messages.map((msg) => (
+              {selectedChat.type === "group" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowMembers(true)}
+                >
+                  <Users size={16} />
+                  Membros
+                </Button>
+              )}
+            </header>
+            <section className="flex-1 space-y-3 overflow-y-auto p-5">
+              {selectedMessages.map((message) => {
+                const mine = message.senderId === currentUser.id
+                const read = isMessageRead(message, selectedChat)
+                return (
                   <div
-                    key={msg.id}
-                    className={cn(
-                      "flex flex-col max-w-[70%] rounded-lg px-3 py-1.5 shadow-sm text-sm relative group",
-                      msg.isMe
-                        ? "bg-emerald-100 dark:bg-emerald-900 text-emerald-950 dark:text-emerald-50 ml-auto rounded-tr-none"
-                        : "bg-white dark:bg-gray-800 text-foreground mr-auto rounded-tl-none"
-                    )}
+                    key={message.id}
+                    className={`max-w-[75%] rounded-lg px-3 py-2 text-sm ${
+                      mine
+                        ? "ml-auto bg-emerald-100 dark:bg-emerald-900"
+                        : "bg-white dark:bg-gray-800"
+                    }`}
                   >
-                    {/* Nome do Remetente em Grupo se não for eu */}
-                    {activeChat.type === "group" && !msg.isMe && (
-                      <span className="text-[10px] font-semibold text-primary block mb-0.5">
-                        {msg.senderName}
-                      </span>
+                    {!mine && selectedChat.type === "group" && (
+                      <strong className="mb-1 block text-xs text-primary">
+                        {userName(message.senderId)}
+                      </strong>
                     )}
-
-                    {/* Conteúdo da Imagem */}
-                    {msg.imageUrl && (
-                      <div className="mb-1 rounded overflow-hidden max-w-full">
-                        <img
-                          src={msg.imageUrl}
-                          alt="Imagem compartilhada"
-                          className="max-h-60 object-cover w-full"
+                    <p>{message.content}</p>
+                    <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-gray-400">
+                      <time>
+                        {new Date(message.createdAt).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </time>
+                      {mine && message.deliveryStatus === "pending" && (
+                        <Clock size={12} aria-label="Enviando" />
+                      )}
+                      {mine && message.deliveryStatus === "failed" && (
+                        <CircleAlert size={12} className="text-red-500" />
+                      )}
+                      {mine && message.deliveryStatus !== "pending" && !read && (
+                        <Check size={13} aria-label="Enviada" />
+                      )}
+                      {mine && read && (
+                        <CheckCheck
+                          size={14}
+                          className="text-blue-500"
+                          aria-label="Lida"
                         />
-                      </div>
-                    )}
-
-                    {/* Texto da Mensagem */}
-                    {msg.text && <p className="leading-snug pr-8 whitespace-pre-wrap">{msg.text}</p>}
-
-                    {/* Horário e Ticks */}
-                    <div className="absolute bottom-1 right-1.5 flex items-center gap-0.5 text-[9px] text-gray-400">
-                      <span>{msg.timestamp}</span>
-                      {msg.isMe && (
-                        <CheckCheck size={12} className="text-blue-500 shrink-0" />
                       )}
                     </div>
                   </div>
-                ))
-              )}
-
-              {/* Indicador de Digitação */}
-              {typingChatId === activeChat.id && (
-                <div className="bg-white dark:bg-gray-800 text-foreground mr-auto rounded-lg rounded-tl-none px-3 py-1.5 shadow-sm text-xs flex items-center gap-2 max-w-[200px]">
-                  <span className="text-gray-400 italic">Digitando</span>
-                  <div className="flex gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "0ms" }} />
-                    <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "150ms" }} />
-                    <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "300ms" }} />
-                  </div>
-                </div>
-              )}
-
-              <div ref={messagesEndRef} />
-            </div>
-
-            {/* Input Bar */}
-            <div className="h-16 px-4 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 flex items-center gap-3 shrink-0 z-10">
-              
-              {/* Menu de anexo */}
-              <div className="flex items-center gap-1 text-gray-500">
-                <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors">
-                  <Smile size={20} />
-                </button>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors relative"
-                >
-                  <Paperclip size={20} />
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    accept="image/*"
-                    onChange={handleImageUpload}
-                    className="hidden"
-                  />
-                </button>
-              </div>
-
-              {/* Caixa de Texto */}
-              <div className="flex-1">
-                <input
-                  type="text"
-                  placeholder="Digite uma mensagem"
-                  value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-                  className="w-full bg-gray-100 dark:bg-gray-800 text-sm rounded-lg px-4 py-2 border-0 outline-none text-foreground placeholder:text-gray-400"
-                />
-              </div>
-
-              {/* Botão de Enviar */}
-              <button
-                onClick={handleSendMessage}
-                disabled={!inputText.trim()}
-                className={cn(
-                  "p-2.5 rounded-full flex items-center justify-center transition-all",
-                  inputText.trim()
-                    ? "bg-primary text-primary-foreground hover:bg-primary/95 shadow-xs"
-                    : "text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-                )}
-              >
+                )
+              })}
+              <div ref={bottomRef} />
+            </section>
+            <footer className="flex h-16 items-center gap-3 border-t bg-white px-4 dark:border-gray-800 dark:bg-gray-900">
+              <Input
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={(event) => event.key === "Enter" && void sendMessage()}
+                placeholder="Digite uma mensagem"
+              />
+              <Button size="icon" onClick={sendMessage} disabled={!input.trim()}>
                 <Send size={18} />
-              </button>
-            </div>
+              </Button>
+            </footer>
           </>
         ) : (
-          /* Landing Screen */
-          <div className="flex-1 flex flex-col items-center justify-center p-8 bg-gray-50 dark:bg-gray-950 text-center">
-            <div className="w-20 h-20 rounded-full bg-primary/5 flex items-center justify-center mb-6">
-              <MessageSquare size={40} className="text-primary opacity-60" />
-            </div>
-            <h2 className="text-xl font-bold text-foreground">ByteTalk Web</h2>
-            <p className="text-sm text-gray-400 dark:text-gray-500 max-w-sm mt-2">
-              Selecione uma conversa na barra lateral para começar a enviar mensagens. Suporta bate-papos privados (1:1) e grupos (1:N).
-            </p>
-            <div className="mt-8 flex gap-3">
-              <Button onClick={() => setIsNewChatModalOpen(true)} variant="outline" size="sm" className="gap-2">
-                <User size={14} /> Nova Conversa
-              </Button>
-              <Button onClick={() => setIsNewGroupModalOpen(true)} size="sm" className="gap-2">
-                <Users size={14} /> Novo Grupo
-              </Button>
-            </div>
-            <div className="absolute bottom-6 text-[10px] text-gray-400 flex items-center gap-1">
-              <CheckCheck size={12} className="text-blue-500" /> Criptografia de ponta a ponta
-            </div>
+          <div className="flex flex-1 flex-col items-center justify-center text-gray-400">
+            <MessageSquare size={48} />
+            <p className="mt-3">Selecione uma conversa</p>
           </div>
         )}
       </main>
 
-      {/* MODAL: NOVA CONVERSA (1:1) */}
-      {isNewChatModalOpen && (
-        <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-900 w-full max-w-md rounded-xl shadow-lg border border-gray-100 dark:border-gray-800 flex flex-col max-h-[85vh]">
-            <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
-              <h3 className="font-bold text-base text-foreground">Iniciar Conversa Privada (1:1)</h3>
-              <button
-                onClick={() => setIsNewChatModalOpen(false)}
-                className="p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            
-            <div className="p-4 overflow-y-auto space-y-3 flex-1">
-              <p className="text-xs text-gray-400">Selecione um contato para começar a conversar:</p>
-              <div className="space-y-1">
-                {MOCK_CONTACTS.map((contact) => (
-                  <div
-                    key={contact.email}
-                    onClick={() => handleStartPrivateChat(contact.name)}
-                    className="flex items-center gap-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-lg cursor-pointer transition-colors"
-                  >
-                    <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm">
-                      {contact.avatar}
-                    </div>
-                    <div>
-                      <h4 className="font-semibold text-sm text-foreground">{contact.name}</h4>
-                      <p className="text-xs text-gray-400">{contact.email}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: NOVO GRUPO (1:N) */}
-      {isNewGroupModalOpen && (
-        <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-900 w-full max-w-md rounded-xl shadow-lg border border-gray-100 dark:border-gray-800 flex flex-col max-h-[85vh]">
-            <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
-              <h3 className="font-bold text-base text-foreground">Criar Novo Grupo (1:N)</h3>
-              <button
-                onClick={() => setIsNewGroupModalOpen(false)}
-                className="p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            
-            <div className="p-4 space-y-4 overflow-y-auto flex-1">
-              {/* Nome do grupo */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-gray-500">Nome do Grupo</label>
-                <Input
-                  type="text"
-                  placeholder="Ex: Amigos da Faculdade, Squad Frontend..."
-                  value={newGroupName}
-                  onChange={(e) => setNewGroupName(e.target.value)}
-                />
-              </div>
-
-              {/* Seleção de participantes */}
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-gray-500 block">Adicionar Participantes</label>
-                <div className="space-y-1 divide-y divide-gray-50 dark:divide-gray-800">
-                  {MOCK_CONTACTS.map((contact) => {
-                    const isSelected = selectedGroupParticipants.includes(contact.name)
-                    return (
-                      <div
-                        key={contact.email}
-                        onClick={() => toggleParticipantSelection(contact.name)}
-                        className="flex items-center justify-between p-2.5 hover:bg-gray-50 dark:hover:bg-gray-800/40 rounded-md cursor-pointer transition-colors"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs">
-                            {contact.avatar}
-                          </div>
-                          <div>
-                            <h4 className="font-semibold text-xs text-foreground">{contact.name}</h4>
-                            <p className="text-[10px] text-gray-400">{contact.email}</p>
-                          </div>
-                        </div>
-
-                        <div className={cn(
-                          "w-5 h-5 rounded-md border flex items-center justify-center transition-all",
-                          isSelected
-                            ? "bg-primary border-primary text-primary-foreground"
-                            : "border-gray-300 dark:border-gray-700"
-                        )}>
-                          {isSelected && <Plus size={14} className="rotate-45" />}
-                        </div>
-                      </div>
+      {showCreate && (
+        <Modal title="Nova conversa" onClose={closeCreate}>
+          <label className="mb-4 flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={groupMode}
+              onChange={(event) => {
+                setGroupMode(event.target.checked)
+                setSelectedUsers([])
+              }}
+            />
+            Criar grupo
+          </label>
+          {groupMode && (
+            <Input
+              className="mb-4"
+              value={groupName}
+              onChange={(event) => setGroupName(event.target.value)}
+              placeholder="Nome do grupo"
+            />
+          )}
+          <div className="max-h-72 space-y-1 overflow-y-auto">
+            {users.map((user) => {
+              const selected = selectedUsers.includes(user.id)
+              const online = onlineUserIds.has(user.id)
+              return (
+                <button
+                  key={user.id}
+                  className={`flex w-full items-center gap-3 rounded-lg p-3 text-left text-sm ${
+                    selected ? "bg-primary/10" : "hover:bg-gray-100 dark:hover:bg-gray-800"
+                  }`}
+                  onClick={() =>
+                    setSelectedUsers((previous) =>
+                      groupMode
+                        ? selected
+                          ? previous.filter((id) => id !== user.id)
+                          : [...previous, user.id]
+                        : [user.id],
                     )
-                  })}
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4 border-t border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex justify-end gap-2 shrink-0">
-              <Button variant="outline" size="sm" onClick={() => setIsNewGroupModalOpen(false)}>
-                Cancelar
-              </Button>
-              <Button size="sm" onClick={handleCreateGroup}>
-                Criar Grupo
-              </Button>
-            </div>
+                  }
+                >
+                  <UserAvatar user={user} online={online} />
+                  <span className="min-w-0 flex-1">
+                    <strong className="block truncate">{user.name}</strong>
+                    <span className="block truncate text-xs text-gray-400">
+                      {user.email}
+                    </span>
+                  </span>
+                  <span
+                    className={`text-xs ${online ? "text-green-500" : "text-gray-400"}`}
+                  >
+                    {online ? "Online" : "Offline"}
+                  </span>
+                </button>
+              )
+            })}
           </div>
-        </div>
+          <Button className="mt-5 w-full" onClick={createChat}>
+            Criar conversa
+          </Button>
+        </Modal>
       )}
-      
+
+      {showMembers && selectedChat?.type === "group" && (
+        <Modal title={`Membros de ${chatName(selectedChat)}`} onClose={() => setShowMembers(false)}>
+          <div className="space-y-2">
+            {selectedChat.participants.map((participant) => (
+              <div
+                key={participant.userId}
+                className="flex items-center justify-between rounded-lg border p-3 dark:border-gray-800"
+              >
+                <div className="flex items-center gap-3">
+                  <UserAvatar
+                    user={
+                      participant.userId === currentUser.id
+                        ? currentUser
+                        : usersById.get(participant.userId)
+                    }
+                    online={
+                      participant.userId === currentUser.id ||
+                      onlineUserIds.has(participant.userId)
+                    }
+                  />
+                  <div>
+                    <strong className="text-sm">{userName(participant.userId)}</strong>
+                    <p className="flex items-center gap-1 text-xs text-gray-400">
+                      {participant.role === "admin" && <Shield size={12} />}
+                      {participant.role === "admin" ? "Administrador" : "Membro"}
+                    </p>
+                  </div>
+                </div>
+                {selectedChat.adminId === currentUser.id &&
+                  participant.userId !== selectedChat.adminId && (
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => removeMember(participant.userId)}
+                    >
+                      <UserMinus size={14} />
+                      Remover
+                    </Button>
+                  )}
+              </div>
+            ))}
+          </div>
+          {selectedChat.adminId === currentUser.id && (
+            <>
+              <h3 className="mb-2 mt-5 flex items-center gap-2 text-sm font-semibold">
+                <UserPlus size={15} />
+                Adicionar pessoas
+              </h3>
+              <div className="max-h-48 space-y-1 overflow-y-auto">
+                {users
+                  .filter(
+                    (user) =>
+                      !selectedChat.participants.some(
+                        (participant) => participant.userId === user.id,
+                      ),
+                  )
+                  .map((user) => (
+                    <button
+                      key={user.id}
+                      onClick={() => addMember(user.id)}
+                      className="flex w-full items-center gap-3 rounded-lg p-3 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
+                    >
+                      <UserAvatar
+                        user={user}
+                        online={onlineUserIds.has(user.id)}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <strong className="block truncate">{user.name}</strong>
+                        <span className="block truncate text-xs text-gray-400">
+                          {user.email}
+                        </span>
+                      </span>
+                      <span
+                        className={`text-xs ${
+                          onlineUserIds.has(user.id)
+                            ? "text-green-500"
+                            : "text-gray-400"
+                        }`}
+                      >
+                        {onlineUserIds.has(user.id) ? "Online" : "Offline"}
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+function UserAvatar({
+  user,
+  online,
+  className,
+}: {
+  user?: User | null
+  online?: boolean
+  className?: string
+}) {
+  const initials =
+    user?.name
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join("")
+      .toUpperCase() || "?"
+
+  return (
+    <Avatar className={className}>
+      {user?.avatarUrl && <AvatarImage src={user.avatarUrl} alt={user.name} />}
+      <AvatarFallback>{initials}</AvatarFallback>
+      {online !== undefined && (
+        <AvatarBadge className={online ? "bg-green-500" : "bg-gray-400"} />
+      )}
+    </Avatar>
+  )
+}
+
+function resizeAvatar(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error("Could not read avatar"))
+    reader.onload = () => {
+      const image = new Image()
+      image.onerror = () => reject(new Error("Invalid avatar image"))
+      image.onload = () => {
+        const scale = Math.min(1, 256 / Math.max(image.width, image.height))
+        const canvas = document.createElement("canvas")
+        canvas.width = Math.max(1, Math.round(image.width * scale))
+        canvas.height = Math.max(1, Math.round(image.height * scale))
+        const context = canvas.getContext("2d")
+        if (!context) {
+          reject(new Error("Canvas is unavailable"))
+          return
+        }
+        context.drawImage(image, 0, 0, canvas.width, canvas.height)
+
+        let quality = 0.82
+        let avatarUrl = canvas.toDataURL("image/webp", quality)
+        while (avatarUrl.length > 95_000 && quality > 0.35) {
+          quality -= 0.1
+          avatarUrl = canvas.toDataURL("image/webp", quality)
+        }
+        if (avatarUrl.length > 100_000) {
+          reject(new Error("Avatar is too large"))
+          return
+        }
+        resolve(avatarUrl)
+      }
+      image.src = reader.result as string
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
+function Modal({
+  title,
+  onClose,
+  children,
+}: {
+  title: string
+  onClose: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-gray-900">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="font-bold">{title}</h2>
+          <Button size="icon" variant="ghost" onClick={onClose}>
+            <X size={18} />
+          </Button>
+        </div>
+        {children}
+      </div>
     </div>
   )
 }

@@ -17,13 +17,14 @@ export interface UserAttributes {
   name: string;
   email: string;
   passwordHash: string;
+  avatarUrl: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
 
 export type UserCreationAttributes = Optional<
   UserAttributes,
-  'id' | 'createdAt' | 'updatedAt'
+  'id' | 'avatarUrl' | 'createdAt' | 'updatedAt'
 >;
 
 @Table({
@@ -52,6 +53,10 @@ export class User
   @AllowNull(false)
   @Column(DataType.STRING(60))
   declare passwordHash: string;
+
+  @AllowNull(true)
+  @Column(DataType.TEXT)
+  declare avatarUrl: string | null;
 
   @CreatedAt
   declare createdAt: Date;

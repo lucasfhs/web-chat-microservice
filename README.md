@@ -346,3 +346,83 @@ Simular:
 * Login simultâneo
 * Troca de mensagens simultânea
 
+---
+
+# Executar o Projeto
+
+Crie o arquivo de ambiente e altere os segredos:
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Aplicação: `http://localhost:8080`
+
+RabbitMQ Management: `http://localhost:15672`
+
+O Nginx do frontend encaminha `/api` ao API Gateway e `/socket.io` ao
+WebSocket Service. Auth, Chat, PostgreSQL, Redis e RabbitMQ não precisam ser
+expostos publicamente.
+
+## API pública
+
+* `POST /api/auth/register`
+* `POST /api/auth/login`
+* `POST /api/auth/logout`
+* `GET /api/auth/validate`
+* `GET /api/auth/users`
+* `GET /api/chats`
+* `POST /api/chats`
+* `GET /api/chats/:chatId/messages`
+* `POST /api/chats/:chatId/messages`
+* `POST /api/chats/:chatId/participants`
+* `DELETE /api/chats/:chatId/participants/:participantId`
+* `POST /api/chats/:chatId/read`
+
+As rotas de chat são autenticadas pelo Gateway. O Gateway valida o token no
+Auth Service e injeta a identidade do usuário nas chamadas internas.
+
+O criador de um grupo é seu administrador. Apenas ele pode adicionar e
+remover membros. Leituras são persistidas por mensagem e distribuídas em
+tempo real.
+
+## Eventos em tempo real
+
+* `message.created`
+* `message.read`
+* `chat.created`
+* `participant.added`
+* `participant.removed`
+
+Com a stack Docker ativa, o fluxo completo de grupos pode ser validado com:
+
+```bash
+cd frontend
+npm run test:e2e:realtime
+```
+
+## Kubernetes
+
+Os manifests iniciais estão em `k8s/`. Eles incluem Services internos,
+probes, ConfigMap, Secret, persistência do PostgreSQL e duas réplicas para o
+Gateway, WebSocket Service e frontend.
+
+Para instalar e executar o ambiente Kubernetes localmente no Windows com
+Docker Desktop, incluindo escala manual e HPA, consulte
+[`KUBERNETES_LOCAL.md`](KUBERNETES_LOCAL.md).
+
+Para uma visão resumida dos manifests, consulte `k8s/README.md`.
+
+Para publicar as imagens no ECR e fazer o deploy no Amazon EKS, consulte
+`DEPLOY_AWS_EKS.md`.
+
+
+# Trabalho Futuro
+
+* Replicação de Banco
+* Balanceamento de Carga
+* Notificações Push
+* Upload de Arquivos
+* Criptografia ponta a ponta
+

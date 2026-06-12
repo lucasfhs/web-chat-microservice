@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SequelizeModule } from '@nestjs/sequelize';
+import { DatabaseSchemaService } from './database-schema.service';
 
 @Module({
   imports: [
@@ -28,5 +29,6 @@ import { SequelizeModule } from '@nestjs/sequelize';
       }),
     }),
   ],
+  providers: [DatabaseSchemaService],
 })
 export class DatabaseModule {}
