@@ -12,7 +12,7 @@ export function Navbar() {
                         to="/rooms"
                         className="text-xl font-bold"
                     >
-                        MicroN
+                        ByteTalk
                     </Link>
 
                     <Separator
