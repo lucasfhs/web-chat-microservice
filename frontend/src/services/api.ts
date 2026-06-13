@@ -151,5 +151,6 @@ export const chatService = {
 export function connectRealtime(): Socket {
   return io(import.meta.env.VITE_WS_URL || "/realtime", {
     auth: { token: session.getToken() },
+    transports: ["websocket"],
   })
 }
