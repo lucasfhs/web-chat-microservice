@@ -18,7 +18,7 @@ import {
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import type { Socket } from "socket.io-client"
-
+import { v4 as uuidv4 } from "uuid";
 import { Button } from "@/components/ui/button"
 import {
   Avatar,
@@ -282,7 +282,7 @@ export function ChatPage() {
   const sendMessage = async () => {
     if (!selectedChatId || !input.trim() || !currentUser) return
     const content = input.trim()
-    const temporaryId = `pending-${crypto.randomUUID()}`
+    const temporaryId = `pending-${uuidv4()}`
     const pendingMessage: Message = {
       id: temporaryId,
       chatId: selectedChatId,
