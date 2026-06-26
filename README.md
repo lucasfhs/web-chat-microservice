@@ -417,12 +417,3 @@ Para uma visão resumida dos manifests, consulte `k8s/README.md`.
 Para publicar as imagens no ECR e fazer o deploy no Amazon EKS, consulte
 `DEPLOY_AWS_EKS.md`.
 
-
-# Trabalho Futuro
-
-* Replicação de Banco
-* Balanceamento de Carga
-* Notificações Push
-* Upload de Arquivos
-* Criptografia ponta a ponta
-
