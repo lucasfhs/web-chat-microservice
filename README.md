@@ -322,29 +322,186 @@ Emitido quando usuário desconecta.
 
 # Testes
 
-## Unitários
+O projeto tem três níveis principais de teste:
 
-Cobrir:
+* **Unitário**: valida uma classe ou serviço isolado, com dependências mockadas.
+* **Integração/E2E**: valida o fluxo real entre frontend, API Gateway, serviços,
+  banco, RabbitMQ, Redis e WebSocket.
+* **Carga**: executa vários usuários e mensagens simultâneas para observar
+  latência, entrega em tempo real e persistência.
 
-* Auth Service
-* Chat Service
+## Pré-requisitos
 
-## Integração
+Instale as dependências dos serviços que possuem testes e scripts:
 
-Cobrir:
+```bash
+cd auth-service
+npm install
 
-* Gateway → Auth
-* Gateway → Chat
-* Chat → RabbitMQ
-* RabbitMQ → WebSocket
+cd ../chat-service
+npm install
 
-## Carga
+cd ../frontend
+npm install
+```
 
-Simular:
+Para os testes que usam a aplicação completa, suba a stack como normalmente:
 
-* 10 usuários simultâneos
-* Login simultâneo
-* Troca de mensagens simultânea
+```bash
+cd ..
+cp .env.example .env
+docker compose up --build
+```
+
+Aguarde o frontend responder em `http://localhost:8080` antes de rodar os
+testes de integração ou carga.
+
+## Teste unitário
+
+Os testes unitários ficam nos arquivos `*.spec.ts`. Atualmente existem testes
+para:
+
+* `auth-service/src/auth/auth.service.spec.ts`
+* `chat-service/src/chat/chat.service.spec.ts`
+
+Eles não precisam do Docker Compose ativo, porque usam mocks para banco, Redis,
+RabbitMQ e outros serviços externos.
+
+Execute cada serviço separadamente:
+
+```bash
+cd auth-service
+npm test
+```
+
+```bash
+cd chat-service
+npm test
+```
+
+Para gerar cobertura no Auth Service:
+
+```bash
+cd auth-service
+npm run test:cov
+```
+
+Para gerar cobertura no Chat Service:
+
+```bash
+cd chat-service
+npm run test:cov
+```
+
+Como escrever novos testes unitários:
+
+* Crie arquivos `*.spec.ts` ao lado da classe testada.
+* Use mocks para dependências externas, como Sequelize, Redis, RabbitMQ e HTTP.
+* Teste regras de negócio isoladas, por exemplo credenciais inválidas, criação
+  de grupo sem nome, usuário sem permissão e publicação correta de evento.
+
+## Teste de integração/E2E
+
+O teste de integração disponível valida o fluxo completo de grupo em tempo real:
+
+* cadastro e login de usuários;
+* validação do token pelo Gateway/Auth;
+* criação de grupo pelo Chat Service;
+* eventos em tempo real via WebSocket;
+* publicação/consumo de eventos pelo RabbitMQ;
+* recibos de leitura;
+* remoção de participante;
+* persistência e consulta de histórico.
+
+Com o Docker Compose ativo, rode:
+
+```bash
+cd frontend
+npm run test:e2e:realtime
+```
+
+Por padrão esse script usa:
+
+* `E2E_API_URL=http://localhost:8080/api`
+* `E2E_WS_URL=http://localhost:8080/realtime`
+
+Caso precise apontar para outro ambiente:
+
+```bash
+E2E_API_URL=http://localhost:8080/api E2E_WS_URL=http://localhost:8080/realtime npm run test:e2e:realtime
+```
+
+No PowerShell:
+
+```powershell
+$env:E2E_API_URL="http://localhost:8080/api"
+$env:E2E_WS_URL="http://localhost:8080/realtime"
+npm run test:e2e:realtime
+```
+
+O teste passa quando o terminal mostra:
+
+```text
+Realtime group E2E passed
+```
+
+## Teste de carga
+
+O teste de carga cria usuários, faz logins simultâneos, abre conexões WebSocket,
+cria um grupo e envia mensagens em paralelo. Ao final, ele mostra métricas de
+latência HTTP, taxa de requisições, entregas em tempo real e mensagens
+persistidas.
+
+Com o Docker Compose ativo, rode:
+
+```bash
+cd frontend
+LOAD_API_URL=http://localhost:8080/api LOAD_WS_URL=http://localhost:8080/realtime npm run test:load
+```
+
+No PowerShell:
+
+```powershell
+cd frontend
+$env:LOAD_API_URL="http://localhost:8080/api"
+$env:LOAD_WS_URL="http://localhost:8080/realtime"
+npm run test:load
+```
+
+Por padrão o script simula 10 usuários e 5 mensagens por usuário. Para alterar
+a carga:
+
+```bash
+LOAD_API_URL=http://localhost:8080/api LOAD_WS_URL=http://localhost:8080/realtime LOAD_USERS=25 LOAD_MESSAGES=10 npm run test:load
+```
+
+No PowerShell:
+
+```powershell
+$env:LOAD_API_URL="http://localhost:8080/api"
+$env:LOAD_WS_URL="http://localhost:8080/realtime"
+$env:LOAD_USERS="25"
+$env:LOAD_MESSAGES="10"
+npm run test:load
+```
+
+O teste passa quando o terminal mostra:
+
+```text
+RESULT: PASS
+```
+
+Se o teste falhar por timeout, confirme se todos os containers estão saudáveis:
+
+```bash
+docker compose ps
+```
+
+E acompanhe os logs:
+
+```bash
+docker compose logs -f api-gateway auth-service chat-service websocket-service rabbitmq
+```
 
 ---
 
